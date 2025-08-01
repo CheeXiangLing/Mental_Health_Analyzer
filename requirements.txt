@@ -1,7 +1,8 @@
 streamlit==1.32.2
 torch
 transformers
-joblib
-emoji
 nltk
+emoji
+html5lib
 scikit-learn
+joblib
