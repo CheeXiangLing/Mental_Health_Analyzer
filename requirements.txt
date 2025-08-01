@@ -1,7 +1,6 @@
 streamlit==1.32.2
 transformers==4.41.2
 torch==2.7.1
-scikit-learn==1.4.2  # Remove this or use a newer version
 numpy==1.26.4  # Add explicit numpy version
 scipy==1.13.0  # Add explicit scipy version
 emoji==2.11.0
