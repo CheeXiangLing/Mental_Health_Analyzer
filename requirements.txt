@@ -1,6 +1,6 @@
 streamlit==1.32.2
 transformers==4.41.2
-torch==2.2.2
+torch==2.2.2+cpu --index-url https://download.pytorch.org/whl/cpu
 numpy==1.26.4
 scipy==1.11.4
 emoji==2.11.0
