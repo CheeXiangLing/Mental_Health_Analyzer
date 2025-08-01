@@ -1,6 +1,6 @@
 import streamlit as st
 
-# ✅ Must be set before any other Streamlit elements
+# ✅ Must be the first Streamlit command
 st.set_page_config(page_title="Mental Health Analyzer", page_icon="🧠", layout="wide")
 
 import torch
@@ -23,40 +23,56 @@ from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 from nltk.stem import WordNetLemmatizer
 
-# === Initialize NLTK Data ===
+# === Initialize NLTK Data with Comprehensive Error Handling ===
 @st.cache_resource
 def initialize_nltk():
-    try:
-        # Download required NLTK data
-        nltk.download('stopwords')
-        nltk.download('punkt')
-        nltk.download('wordnet')
-        nltk.download('omw-1.4')  # Required for lemmatization
-        
-        # Verify downloads
-        nltk.data.find('corpora/stopwords')
-        nltk.data.find('tokenizers/punkt')
-        nltk.data.find('corpora/wordnet')
-    except Exception as e:
-        st.error(f"Failed to initialize NLTK: {str(e)}")
-        raise
+    required_data = [
+        ('corpora/stopwords', 'stopwords'),
+        ('tokenizers/punkt', 'punkt'),
+        ('corpora/wordnet', 'wordnet'),
+        ('', 'omw-1.4')  # Open Multilingual WordNet
+    ]
+    
+    for path, package in required_data:
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # Try to find the resource
+                if path:
+                    nltk.data.find(path)
+                break
+            except LookupError:
+                if attempt == max_retries - 1:
+                    st.error(f"❌ Failed to load NLTK resource: {package}")
+                    st.error(f"Please ensure the app has internet access to download NLTK data")
+                    return False
+                try:
+                    nltk.download(package, quiet=True)
+                except Exception as e:
+                    st.warning(f"Attempt {attempt + 1} failed for {package}: {str(e)}")
+                    time.sleep(1)  # Wait before retrying
+    return True
+
+# Initialize NLTK with error display
+if not initialize_nltk():
+    st.error("Critical NLTK resources could not be loaded. The app cannot continue.")
+    st.stop()
 
 try:
-    initialize_nltk()
     stop_words = set(stopwords.words('english'))
     lemmatizer = WordNetLemmatizer()
 except Exception as e:
-    st.error(f"Critical error: {str(e)}")
+    st.error(f"Failed to initialize NLTK components: {str(e)}")
     st.stop()
 
-# === URLs of model ZIPs from GitHub Releases ===
+# === Model URLs ===
 MODEL_URLS = {
     "BERT": "https://github.com/CheeXiangLing/Mental_Health_Analyzer/releases/download/v1.0.0/bert_model.zip",
     "DistilBERT": "https://github.com/CheeXiangLing/Mental_Health_Analyzer/releases/download/v1.0.0/distilbert_model.zip",
     "RoBERTa": "https://github.com/CheeXiangLing/Mental_Health_Analyzer/releases/download/v1.0.0/roberta_model.zip"
 }
 
-# === Download and extract transformer models if not already present ===
+# === Download and Extract Models ===
 @st.cache_resource
 def download_and_extract_model(model_name):
     try:
@@ -67,28 +83,40 @@ def download_and_extract_model(model_name):
         folder = f"{model_name.lower()}_model"
         
         if not os.path.exists(folder):
-            with st.spinner(f"📦 Downloading {model_name} model..."):
-                zip_path = f"{folder}.zip"
-                r = requests.get(zip_url, stream=True)
-                r.raise_for_status()
-                
-                with open(zip_path, 'wb') as f:
-                    for chunk in r.iter_content(chunk_size=8192):
-                        if chunk:
-                            f.write(chunk)
-                
-                with st.spinner(f"📂 Extracting {model_name} model..."):
-                    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                        zip_ref.extractall(folder)
-                    os.remove(zip_path)
+            progress = st.progress(0)
+            status = st.empty()
+            status.info(f"⏳ Downloading {model_name} model...")
             
+            # Download the model
+            zip_path = f"{folder}.zip"
+            response = requests.get(zip_url, stream=True)
+            response.raise_for_status()
+            
+            total_size = int(response.headers.get('content-length', 0))
+            downloaded = 0
+            
+            with open(zip_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        progress.progress(min(downloaded / total_size, 1.0))
+            
+            # Extract the model
+            status.info(f"⏳ Extracting {model_name} model...")
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(folder)
+            os.remove(zip_path)
+            
+            progress.empty()
+            status.success(f"✅ {model_name} model ready!")
             return True
         return False
     except Exception as e:
         st.error(f"Failed to download {model_name} model: {str(e)}")
         return False
 
-# === Text Cleaning Functions ===
+# === Text Processing Functions ===
 def basic_clean(text):
     """Simple cleaning for transformer models"""
     return text.strip()
@@ -105,21 +133,15 @@ def clean_text(text):
         text = text.translate(str.maketrans('', '', string.punctuation))
         text = re.sub(r'\d+', '', text)
         
-        # Tokenize with error handling
-        try:
-            words = word_tokenize(text)
-            words = [word for word in words if word not in stop_words]
-            words = [lemmatizer.lemmatize(word) for word in words]
-            return ' '.join(words)
-        except Exception as e:
-            st.error(f"Text processing error: {str(e)}")
-            return text  # Return partially cleaned text
-        
+        words = word_tokenize(text)
+        words = [word for word in words if word not in stop_words]
+        words = [lemmatizer.lemmatize(word) for word in words]
+        return ' '.join(words)
     except Exception as e:
-        st.error(f"Text cleaning failed: {str(e)}")
+        st.error(f"Text cleaning error: {str(e)}")
         return text  # Return original text if cleaning fails
 
-# === Load Sklearn Models ===
+# === Model Loading ===
 @st.cache_resource
 def load_sklearn_models():
     try:
@@ -131,7 +153,7 @@ def load_sklearn_models():
         st.error(f"Failed to load traditional models: {str(e)}")
         return None, None, None
 
-# === Label Map ===
+# === Label Mapping ===
 label_map = {
     0: "Normal",
     1: "Depression",
@@ -182,18 +204,22 @@ def predict_sklearn(model_type, vectorizer, model, text):
         st.error(f"Traditional model prediction error: {str(e)}")
         return "Error"
 
-# === Streamlit UI ===
+# === Main App UI ===
 st.title("🧠 Mental Health Sentiment Analysis")
 
 # Model selection
-model_choice = st.selectbox(
-    "Choose Model:",
-    ["BERT", "DistilBERT", "RoBERTa", "Logistic Regression", "Naive Bayes"]
-)
+col1, col2 = st.columns([1, 3])
+with col1:
+    model_choice = st.selectbox(
+        "Choose Model:",
+        ["BERT", "DistilBERT", "RoBERTa", "Logistic Regression", "Naive Bayes"],
+        key="model_selector"
+    )
 
-text_input = st.text_area("Enter your text here:", height=150)
+with col2:
+    text_input = st.text_area("Enter your text here:", height=150, key="text_input")
 
-if st.button("Analyze"):
+if st.button("Analyze", type="primary", key="analyze_btn"):
     if not text_input.strip():
         st.warning("⚠️ Please enter valid text.")
     else:
@@ -202,6 +228,10 @@ if st.button("Analyze"):
             
             try:
                 if model_choice in ["BERT", "DistilBERT", "RoBERTa"]:
+                    if not download_and_extract_model(model_choice):
+                        st.error("Model download failed. Please try again.")
+                        st.stop()
+                    
                     cleaned = basic_clean(text_input)
                     result = predict_transformer(model_choice, cleaned)
                 else:
@@ -225,7 +255,7 @@ if st.button("Analyze"):
             except Exception as e:
                 st.error(f"Analysis failed: {str(e)}")
 
-# === Sidebar info ===
+# === Sidebar ===
 with st.sidebar:
     st.markdown("### ℹ️ About")
     st.markdown("""
@@ -248,6 +278,25 @@ with st.sidebar:
     *For research/educational purposes only.*
     """)
     
-    if st.button("Clear Cache"):
+    st.markdown("---")
+    st.markdown("### 🔧 Technical Details")
+    try:
+        from transformers import __version__ as transformers_version
+        st.code(f"""
+        Python: {'.'.join(map(str, sys.version_info[:3]))}
+        PyTorch: {torch.__version__}
+        Transformers: {transformers_version}
+        NLTK: {nltk.__version__}
+        """)
+    except:
+        st.code("""
+        Python: 3.9
+        PyTorch: Installed
+        Transformers: Installed
+        NLTK: Installed
+        """)
+    
+    if st.button("Clear Cache", key="clear_cache"):
         st.cache_resource.clear()
         st.success("Cache cleared!")
+        st.experimental_rerun()
