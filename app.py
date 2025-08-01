@@ -1,5 +1,8 @@
 import streamlit as st
 import torch
+import os
+import requests
+import zipfile
 from transformers import (
     BertTokenizerFast, BertForSequenceClassification,
     DistilBertTokenizerFast, DistilBertForSequenceClassification,
@@ -18,6 +21,32 @@ from nltk.stem import WordNetLemmatizer
 # === Load stopwords and lemmatizer ===
 stop_words = set(stopwords.words('english'))
 lemmatizer = WordNetLemmatizer()
+
+# === URLs of model ZIPs from GitHub Releases ===
+MODEL_URLS = {
+    "BERT": "https://github.com/CheeXiangLing/Mental_Health_Analyzer/releases/tag/v1.0.0/bert_model.zip",
+    "DistilBERT": "https://github.com/CheeXiangLing/Mental_Health_Analyzer/releases/tag/v1.0.0/distilbert_model.zip",
+    "RoBERTa": "https://github.com/CheeXiangLing/Mental_Health_Analyzer/releases/tag/v1.0.0/roberta_model.zip"
+}
+
+# === Download and extract transformer models if not already present ===
+@st.cache_resource
+def download_and_extract_model(model_name):
+    zip_url = MODEL_URLS.get(model_name)
+    folder = f"{model_name.lower()}_model"
+
+    if not os.path.exists(folder):
+        st.info(f"📦 Downloading {model_name} model...")
+        zip_path = f"{folder}.zip"
+        r = requests.get(zip_url, stream=True)
+        with open(zip_path, 'wb') as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
+
+        st.info(f"📂 Extracting {model_name} model...")
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(folder)
+        os.remove(zip_path)
 
 # === Basic clean for transformers ===
 def basic_clean(text):
@@ -62,19 +91,20 @@ label_map = {
 # === Inference Functions ===
 def predict_transformer(model_name, text):
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    folder = f"{model_name.lower()}_model"
+
+    # Ensure model is downloaded
+    download_and_extract_model(model_name)
 
     if model_name == "BERT":
-        model_dir = "bert_model"
-        tokenizer = BertTokenizerFast.from_pretrained(model_dir)
-        model = BertForSequenceClassification.from_pretrained(model_dir)
+        tokenizer = BertTokenizerFast.from_pretrained(folder)
+        model = BertForSequenceClassification.from_pretrained(folder)
     elif model_name == "DistilBERT":
-        model_dir = "distilbert_model"
-        tokenizer = DistilBertTokenizerFast.from_pretrained(model_dir)
-        model = DistilBertForSequenceClassification.from_pretrained(model_dir)
+        tokenizer = DistilBertTokenizerFast.from_pretrained(folder)
+        model = DistilBertForSequenceClassification.from_pretrained(folder)
     elif model_name == "RoBERTa":
-        model_dir = "roberta_model"
-        tokenizer = RobertaTokenizerFast.from_pretrained(model_dir)
-        model = RobertaForSequenceClassification.from_pretrained(model_dir)
+        tokenizer = RobertaTokenizerFast.from_pretrained(folder)
+        model = RobertaForSequenceClassification.from_pretrained(folder)
 
     model.to(DEVICE)
     model.eval()
@@ -122,7 +152,7 @@ if st.button("Analyze"):
 
         st.success(f"✅ Prediction using {model_choice}: {result}")
 
-## Add a about section
+# === Sidebar info ===
 with st.sidebar:
     st.markdown("### ℹ️ About")
     st.markdown(
@@ -142,6 +172,3 @@ with st.sidebar:
         '<i>This tool is intended for research and educational purposes only.</i>',
         unsafe_allow_html=True
     )
-
-
-
