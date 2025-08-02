@@ -76,7 +76,7 @@ def download_and_extract_model(model_name):
             with open(zip_path, 'wb') as f:
                 for chunk in r.iter_content(chunk_size=8192):
                     f.write(chunk)
-
+    
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extractall(folder)
             os.remove(zip_path)
@@ -86,6 +86,16 @@ def download_and_extract_model(model_name):
             if missing_files:
                 st.error(f"❌ Missing files after extraction: {', '.join(missing_files)}")
                 raise FileNotFoundError(f"Missing files: {missing_files}")
+        
+        except requests.exceptions.RequestException as e:
+            st.error(f"❌ Failed to download model: {str(e)}")
+            raise
+        except zipfile.BadZipFile as e:
+            st.error(f"❌ Invalid ZIP file: {str(e)}")
+            raise
+        except Exception as e:
+            st.error(f"❌ Unexpected error during model download/extraction: {str(e)}")
+            raise
                     
 
 # === Text Processing Functions ===
@@ -226,5 +236,6 @@ with st.sidebar:
         '<i>This tool is intended for research and educational purposes only.</i>',
         unsafe_allow_html=True
     )
+
 
 
