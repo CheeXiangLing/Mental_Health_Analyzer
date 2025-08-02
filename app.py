@@ -3,6 +3,7 @@ import torch
 import os
 import requests
 import zipfile
+import nltk
 from transformers import (
     BertTokenizerFast, BertForSequenceClassification,
     DistilBertTokenizerFast, DistilBertForSequenceClassification,
@@ -17,6 +18,18 @@ import string
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 from nltk.stem import WordNetLemmatizer
+
+# === Download NLTK data if not present ===
+try:
+    nltk.data.find('corpora/stopwords')
+    nltk.data.find('tokenizers/punkt')
+    nltk.data.find('corpora/wordnet')
+except LookupError:
+    with st.spinner("📥 Downloading NLTK data (first run only)..."):
+        nltk.download('stopwords')
+        nltk.download('punkt')
+        nltk.download('wordnet')
+        st.success("✅ NLTK data downloaded successfully!")
 
 # === Load stopwords and lemmatizer ===
 stop_words = set(stopwords.words('english'))
@@ -204,3 +217,4 @@ with st.sidebar:
         '<i>This tool is intended for research and educational purposes only.</i>',
         unsafe_allow_html=True
     )
+
