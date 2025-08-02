@@ -65,7 +65,6 @@ def download_and_extract_model(model_name):
     files_exist = all(os.path.exists(os.path.join(folder, f)) for f in required_files[model_name])
     
     if not files_exist:
-        with st.spinner(f"📦 Downloading {model_name} model..."):
         try:
             # Create directory if it doesn't exist
             os.makedirs(folder, exist_ok=True)
@@ -227,4 +226,5 @@ with st.sidebar:
         '<i>This tool is intended for research and educational purposes only.</i>',
         unsafe_allow_html=True
     )
+
 
