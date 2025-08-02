@@ -1,4 +1,8 @@
 import streamlit as st
+
+# Must be the first Streamlit command
+st.set_page_config(page_title="Mental Health Analyzer", layout="wide")
+
 import torch
 import os
 import requests
@@ -29,7 +33,6 @@ def initialize_nltk():
             nltk.download('stopwords')
             nltk.download('punkt')
             nltk.download('wordnet')
-            st.success("✅ NLTK data downloaded successfully!")
 
 initialize_nltk()
 
@@ -83,7 +86,6 @@ def setup_model(model_name):
         with st.spinner(f"📥 Downloading {model_name} model weights..."):
             try:
                 download_file(config["model_url"], safetensors_path)
-                st.success(f"✅ {model_name} model weights downloaded successfully!")
             except Exception as e:
                 st.error(f"❌ Failed to download model weights: {str(e)}")
                 raise
@@ -176,7 +178,6 @@ def predict_sklearn(model_type, vectorizer, model, text):
         return "Error in prediction"
 
 # === Streamlit UI ===
-st.set_page_config(page_title="Mental Health Analyzer", layout="wide")
 st.title("🧠 Mental Health Sentiment Analysis")
 
 # Model selection
