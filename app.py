@@ -1,5 +1,8 @@
 import streamlit as st
 import torch
+import os
+import requests
+import zipfile
 from transformers import (
     BertTokenizerFast, BertForSequenceClassification,
     DistilBertTokenizerFast, DistilBertForSequenceClassification,
@@ -7,84 +10,165 @@ from transformers import (
 )
 import joblib
 import time
-import nltk
-from nltk.tokenize import word_tokenize
-import emoji
 import html
+import emoji
+import re
+import string
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+from nltk.stem import WordNetLemmatizer
 
-# Download required NLTK data
-nltk.download('punkt')
+# === Load stopwords and lemmatizer ===
+stop_words = set(stopwords.words('english'))
+lemmatizer = WordNetLemmatizer()
 
-# === Basic cleaning ===
+# === URLs of model ZIPs from GitHub Releases ===
+MODEL_URLS = {
+    "BERT": "https://github.com/CheeXiangLing/Mental_Health_Analyzer/releases/tag/v1.0.0/bert_model.zip",
+    "DistilBERT": "https://github.com/CheeXiangLing/Mental_Health_Analyzer/releases/tag/v1.0.0/distilbert_model.zip",
+    "RoBERTa": "https://github.com/CheeXiangLing/Mental_Health_Analyzer/releases/tag/v1.0.0/roberta_model.zip"
+}
+
+# === Download and extract transformer models if not already present ===
+@st.cache_resource
+def download_and_extract_model(model_name):
+    zip_url = MODEL_URLS.get(model_name)
+    folder = f"{model_name.lower()}_model"
+
+    if not os.path.exists(folder):
+        st.info(f"📦 Downloading {model_name} model...")
+        zip_path = f"{folder}.zip"
+        r = requests.get(zip_url, stream=True)
+        with open(zip_path, 'wb') as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
+
+        st.info(f"📂 Extracting {model_name} model...")
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(folder)
+        os.remove(zip_path)
+
+# === Basic clean for transformers ===
 def basic_clean(text):
-    text = text.strip()
-    text = emoji.demojize(text)
-    text = html.unescape(text)
-    tokens = word_tokenize(text)
-    return ' '.join(tokens)
+    return text.strip()
 
-# === Load Traditional ML Models ===
+# === Full clean for traditional models ===
+def clean_text(text):
+    text = html.unescape(text)
+    text = emoji.replace_emoji(text, replace='')
+
+    text = text.lower()
+    text = re.sub(r'<[^>]+>', ' ', text)
+    text = re.sub(r'http\S+|www\S+|https\S+', ' ', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+
+    text = text.translate(str.maketrans('', '', string.punctuation))
+    text = re.sub(r'\d+', '', text)
+    words = word_tokenize(text)
+    words = [word for word in words if word not in stop_words]
+    words = [lemmatizer.lemmatize(word) for word in words]
+
+    return ' '.join(words)
+
+# === Load Sklearn Models ===
 def load_sklearn_models():
     vectorizer = joblib.load("traditional/tfidf_vectorizer.pkl")
-    log_model = joblib.load("traditional/log_model.pkl")
-    nb_model = joblib.load("traditional/nb_model.pkl")
-    return vectorizer, log_model, nb_model
+    logistic_model = joblib.load("traditional/logistic_model.pkl")
+    naive_model = joblib.load("traditional/naive_bayes_model.pkl")
+    return vectorizer, logistic_model, naive_model
 
-# === Load Transformer Models ===
-def load_transformer_model(model_name):
+# === Label Map ===
+label_map = {
+    0: "Normal",
+    1: "Depression",
+    2: "Anxiety",
+    3: "Suicidal",
+    4: "Stress",
+    5: "Bipolar",
+    6: "Personality disorder"
+}
+
+# === Inference Functions ===
+def predict_transformer(model_name, text):
+    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    folder = f"{model_name.lower()}_model"
+
+    # Ensure model is downloaded
+    download_and_extract_model(model_name)
+
     if model_name == "BERT":
-        tokenizer = BertTokenizerFast.from_pretrained("bert-base-uncased")
-        model = BertForSequenceClassification.from_pretrained("transformers/bert")
+        tokenizer = BertTokenizerFast.from_pretrained(folder)
+        model = BertForSequenceClassification.from_pretrained(folder)
     elif model_name == "DistilBERT":
-        tokenizer = DistilBertTokenizerFast.from_pretrained("distilbert-base-uncased")
-        model = DistilBertForSequenceClassification.from_pretrained("transformers/distilbert")
+        tokenizer = DistilBertTokenizerFast.from_pretrained(folder)
+        model = DistilBertForSequenceClassification.from_pretrained(folder)
     elif model_name == "RoBERTa":
-        tokenizer = RobertaTokenizerFast.from_pretrained("roberta-base")
-        model = RobertaForSequenceClassification.from_pretrained("transformers/roberta")
-    else:
-        raise ValueError("Unknown transformer model")
-    return tokenizer, model
+        tokenizer = RobertaTokenizerFast.from_pretrained(folder)
+        model = RobertaForSequenceClassification.from_pretrained(folder)
 
-# === Predict with Traditional Model ===
-def predict_traditional(text, vectorizer, model):
-    X = vectorizer.transform([text])
-    prediction = model.predict(X)[0]
-    return prediction
+    model.to(DEVICE)
+    model.eval()
 
-# === Predict with Transformer Model ===
-def predict_transformer(text, tokenizer, model):
-    inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True)
+    inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True, max_length=512)
+    inputs = {k: v.to(DEVICE) for k, v in inputs.items()}
+
     with torch.no_grad():
         outputs = model(**inputs)
-    probs = torch.nn.functional.softmax(outputs.logits, dim=1)
-    return torch.argmax(probs).item()
+        prediction = torch.argmax(outputs.logits, dim=1).item()
+
+    return label_map.get(prediction, "Unknown")
+
+def predict_sklearn(model_type, vectorizer, model, text):
+    vectorized = vectorizer.transform([text])
+    prediction = model.predict(vectorized)[0]
+    return label_map.get(prediction, "Unknown")
 
 # === Streamlit UI ===
-st.title("Mental Health Sentiment Analyzer")
-st.write("Enter a sentence related to mental health:")
+st.title("🧠 Mental Health Sentiment Analysis")
 
-text_input = st.text_area("Text Input", height=150)
-model_type = st.selectbox("Select model type:", ["Traditional", "Transformer"])
+# Select model
+model_choice = st.selectbox(
+    "Choose Model:",
+    ["BERT", "DistilBERT", "RoBERTa", "Logistic Regression", "Naive Bayes"]
+)
 
-if model_type == "Traditional":
-    model_choice = st.selectbox("Choose Traditional Model:", ["Logistic Regression", "Naive Bayes"])
-else:
-    model_choice = st.selectbox("Choose Transformer Model:", ["BERT", "DistilBERT", "RoBERTa"])
+text_input = st.text_area("Enter your text here:")
 
 if st.button("Analyze"):
-    if not text_input.strip():
-        st.warning("Please enter some text.")
+    if text_input.strip() == "":
+        st.warning("⚠️ Please enter valid text.")
     else:
-        cleaned = basic_clean(text_input)
-        with st.spinner("Analyzing..."):
+        with st.spinner("🔍 Analyzing input..."):
             time.sleep(1)
-            if model_type == "Traditional":
-                vectorizer, log_model, nb_model = load_sklearn_models()
-                model = log_model if model_choice == "Logistic Regression" else nb_model
-                prediction = predict_traditional(cleaned, vectorizer, model)
-            else:
-                tokenizer, model = load_transformer_model(model_choice)
-                prediction = predict_transformer(cleaned, tokenizer, model)
 
-        label_map = {0: "Negative", 1: "Neutral", 2: "Positive"}
-        st.success(f"Prediction: {label_map[prediction]}")
+            if model_choice in ["BERT", "DistilBERT", "RoBERTa"]:
+                cleaned = basic_clean(text_input)
+                result = predict_transformer(model_choice, cleaned)
+            else:
+                cleaned = clean_text(text_input)
+                vec, log_model, nb_model = load_sklearn_models()
+                model = log_model if model_choice == "Logistic Regression" else nb_model
+                result = predict_sklearn(model_choice, vec, model, cleaned)
+
+        st.success(f"✅ Prediction using {model_choice}: {result}")
+
+# === Sidebar info ===
+with st.sidebar:
+    st.markdown("### ℹ️ About")
+    st.markdown(
+        '<u><b>Mental Health Sentiment Analyzer</b></u><br><br>'
+        'This app analyzes mental health-related text and classifies it into one of several psychological conditions. '
+        'It supports both modern transformer-based models (<b>BERT</b>, <b>DistilBERT</b>, <b>RoBERTa</b>) and traditional machine learning models '
+        '(<b>Logistic Regression</b>, <b>Naive Bayes</b>).<br><br>'
+        'Among the transformer models, <b>BERT</b> delivers the best performance. For traditional models, <b>Logistic Regression</b> performs the best overall.<br><br>'
+        '<b>Detected Categories:</b><br>'
+        '- Normal<br>'
+        '- Depression<br>'
+        '- Anxiety<br>'
+        '- Suicidal<br>'
+        '- Stress<br>'
+        '- Bipolar<br>'
+        '- Personality Disorder<br><br>'
+        '<i>This tool is intended for research and educational purposes only.</i>',
+        unsafe_allow_html=True
+    )
