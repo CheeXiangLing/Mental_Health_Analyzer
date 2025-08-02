@@ -25,15 +25,16 @@ st.set_page_config(page_title="Mental Health Analyzer", layout="wide")
 # === Initialize NLTK Data ===
 def initialize_nltk():
     try:
-        nltk.data.find('corpora/stopwords')
-        nltk.data.find('tokenizers/punkt')
-        nltk.data.find('corpora/wordnet')
-    except LookupError:
-        with st.spinner("📥 Downloading NLTK data (first run only)..."):
-            nltk.download('stopwords')
-            nltk.download('punkt')
-            nltk.download('wordnet')
+        # Download required NLTK data
+        nltk.download('stopwords', quiet=True)
+        nltk.download('punkt', quiet=True)
+        nltk.download('wordnet', quiet=True)
+        nltk.download('punkt_tab', quiet=True)  # Added this line
+    except Exception as e:
+        st.error(f"❌ Error downloading NLTK data: {str(e)}")
+        raise
 
+# Initialize NLTK before anything else
 initialize_nltk()
 
 # === Load NLP Utilities ===
@@ -47,7 +48,7 @@ MODEL_URLS = {
     "RoBERTa": "https://github.com/CheeXiangLing/Mental_Health_Analyzer/releases/download/v1.0.0/roberta_model.zip"
 }
 
-# === Download and extract transformer models if not already present ===
+# === Download and extract transformer models ===
 @st.cache_resource
 def download_and_extract_model(model_name):
     zip_url = MODEL_URLS.get(model_name)
@@ -64,54 +65,58 @@ def download_and_extract_model(model_name):
     files_exist = all(os.path.exists(os.path.join(folder, f)) for f in required_files[model_name])
     
     if not files_exist:
-        st.info(f"📦 Downloading {model_name} model...")
-        
-        # Create directory if it doesn't exist
-        os.makedirs(folder, exist_ok=True)
-        
-        try:
-            zip_path = f"{folder}.zip"
-            r = requests.get(zip_url, stream=True)
-            r.raise_for_status()
-            
-            with open(zip_path, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=8192):
-                    f.write(chunk)
-
-            st.info(f"📂 Extracting {model_name} model...")
-            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                zip_ref.extractall(folder)
-            os.remove(zip_path)
-            
-            # Verify all files were extracted
-            missing_files = [f for f in required_files[model_name] if not os.path.exists(os.path.join(folder, f))]
-            if missing_files:
-                st.error(f"❌ Missing files after extraction: {', '.join(missing_files)}")
-                raise FileNotFoundError(f"Missing files: {missing_files}")
+        with st.spinner(f"📦 Downloading {model_name} model..."):
+            try:
+                # Create directory if it doesn't exist
+                os.makedirs(folder, exist_ok=True)
                 
-        except Exception as e:
-            st.error(f"❌ Error downloading/extracting {model_name} model: {str(e)}")
-            raise
+                zip_path = f"{folder}.zip"
+                r = requests.get(zip_url, stream=True)
+                r.raise_for_status()
+                
+                with open(zip_path, 'wb') as f:
+                    for chunk in r.iter_content(chunk_size=8192):
+                        f.write(chunk)
+
+                with st.spinner(f"📂 Extracting {model_name} model..."):
+                    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                        zip_ref.extractall(folder)
+                os.remove(zip_path)
+                
+                # Verify all files were extracted
+                missing_files = [f for f in required_files[model_name] if not os.path.exists(os.path.join(folder, f))]
+                if missing_files:
+                    st.error(f"❌ Missing files after extraction: {', '.join(missing_files)}")
+                    raise FileNotFoundError(f"Missing files: {missing_files}")
+                    
+            except Exception as e:
+                st.error(f"❌ Error downloading/extracting {model_name} model: {str(e)}")
+                raise
 
 # === Text Processing Functions ===
 def basic_clean(text):
     return text.strip()
 
 def clean_text(text):
-    text = html.unescape(text)
-    text = emoji.replace_emoji(text, replace='')
-    text = text.lower()
-    text = re.sub(r'<[^>]+>', ' ', text)
-    text = re.sub(r'http\S+|www\S+|https\S+', ' ', text)
-    text = re.sub(r'\s+', ' ', text).strip()
-    text = text.translate(str.maketrans('', '', string.punctuation))
-    text = re.sub(r'\d+', '', text)
-    words = word_tokenize(text)
-    words = [word for word in words if word not in stop_words]
-    words = [lemmatizer.lemmatize(word) for word in words]
-    return ' '.join(words)
+    try:
+        text = html.unescape(text)
+        text = emoji.replace_emoji(text, replace='')
+        text = text.lower()
+        text = re.sub(r'<[^>]+>', ' ', text)
+        text = re.sub(r'http\S+|www\S+|https\S+', ' ', text)
+        text = re.sub(r'\s+', ' ', text).strip()
+        text = text.translate(str.maketrans('', '', string.punctuation))
+        text = re.sub(r'\d+', '', text)
+        words = word_tokenize(text)
+        words = [word for word in words if word not in stop_words]
+        words = [lemmatizer.lemmatize(word) for word in words]
+        return ' '.join(words)
+    except Exception as e:
+        st.error(f"❌ Error cleaning text: {str(e)}")
+        raise
 
 # === Load Sklearn Models ===
+@st.cache_resource
 def load_sklearn_models():
     try:
         vectorizer = joblib.load("traditional/tfidf_vectorizer.pkl")
@@ -185,10 +190,10 @@ model_choice = st.selectbox(
     ["BERT", "DistilBERT", "RoBERTa", "Logistic Regression", "Naive Bayes"]
 )
 
-text_input = st.text_area("Enter your text here:")
+text_input = st.text_area("Enter your text here:", height=150)
 
 if st.button("Analyze"):
-    if text_input.strip() == "":
+    if not text_input.strip():
         st.warning("⚠️ Please enter valid text.")
     else:
         with st.spinner("🔍 Analyzing input..."):
