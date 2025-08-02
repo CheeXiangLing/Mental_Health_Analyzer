@@ -3,7 +3,6 @@ import torch
 import os
 import requests
 import zipfile
-import nltk
 from transformers import (
     BertTokenizerFast, BertForSequenceClassification,
     DistilBertTokenizerFast, DistilBertForSequenceClassification,
@@ -19,137 +18,66 @@ from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 from nltk.stem import WordNetLemmatizer
 
-# Must be first Streamlit command
-st.set_page_config(page_title="Mental Health Analyzer", layout="wide")
-
-# === Initialize NLTK Data ===
-def initialize_nltk():
-    try:
-        nltk.data.find('corpora/stopwords')
-        nltk.data.find('tokenizers/punkt')
-        nltk.data.find('corpora/wordnet')
-    except LookupError:
-        with st.spinner("📥 Downloading NLTK data (first run only)..."):
-            nltk.download('stopwords')
-            nltk.download('punkt')
-            nltk.download('wordnet')
-
-initialize_nltk()
-
-# === Load NLP Utilities ===
+# === Load stopwords and lemmatizer ===
 stop_words = set(stopwords.words('english'))
 lemmatizer = WordNetLemmatizer()
 
-# === Model Configuration ===
-MODEL_CONFIG = {
-    "BERT": {
-        "folder": "bert_model",
-        "zip_url": "https://github.com/CheeXiangLing/Mental_Health_Analyzer/releases/download/v1.0.0/bert_model.zip",
-        "required_files": ["config.json", "tokenizer_config.json", "vocab.txt", "special_tokens_map.json", "model.safetensors"],
-        "tokenizer_class": BertTokenizerFast,
-        "model_class": BertForSequenceClassification
-    },
-    "DistilBERT": {
-        "folder": "distilbert_model",
-        "zip_url": "https://github.com/CheeXiangLing/Mental_Health_Analyzer/releases/download/v1.0.0/distilbert_model.zip",
-        "required_files": ["config.json", "tokenizer_config.json", "vocab.txt", "special_tokens_map.json", "model.safetensors"],
-        "tokenizer_class": DistilBertTokenizerFast,
-        "model_class": DistilBertForSequenceClassification
-    },
-    "RoBERTa": {
-        "folder": "roberta_model",
-        "zip_url": "https://github.com/CheeXiangLing/Mental_Health_Analyzer/releases/download/v1.0.0/roberta_model.zip",
-        "required_files": ["config.json", "tokenizer_config.json", "vocab.json", "merges.txt", "special_tokens_map.json", "model.safetensors"],
-        "tokenizer_class": RobertaTokenizerFast,
-        "model_class": RobertaForSequenceClassification
-    }
+# === URLs of model ZIPs from GitHub Releases ===
+MODEL_URLS = {
+    "BERT": "https://github.com/CheeXiangLing/Mental_Health_Analyzer/releases/tag/v1.0.0/bert_model.zip",
+    "DistilBERT": "https://github.com/CheeXiangLing/Mental_Health_Analyzer/releases/tag/v1.0.0/distilbert_model.zip",
+    "RoBERTa": "https://github.com/CheeXiangLing/Mental_Health_Analyzer/releases/tag/v1.0.0/roberta_model.zip"
 }
 
-# === File Download Utility ===
-def download_and_extract_zip(url, extract_to):
-    try:
-        # Download the zip file
-        zip_path = os.path.join(extract_to, "temp.zip")
-        response = requests.get(url, stream=True)
-        response.raise_for_status()
-        
-        with open(zip_path, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
-        
-        # Extract the zip file
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extractall(extract_to)
-        
-        # Remove the zip file
-        os.remove(zip_path)
-        return True
-    except Exception as e:
-        st.error(f"❌ Download/extract failed: {str(e)}")
-        if os.path.exists(zip_path):
-            os.remove(zip_path)
-        return False
-
-# === Model Setup ===
+# === Download and extract transformer models if not already present ===
 @st.cache_resource
-def setup_model(model_name):
-    config = MODEL_CONFIG[model_name]
-    model_folder = config["folder"]
-    os.makedirs(model_folder, exist_ok=True)
-    
-    # Check if all required files exist
-    missing_files = [
-        f for f in config["required_files"] 
-        if not os.path.exists(os.path.join(model_folder, f))
-    ]
-    
-    if missing_files:
-        with st.spinner(f"📥 Downloading {model_name} model..."):
-            if not download_and_extract_zip(config["zip_url"], model_folder):
-                raise Exception(f"Failed to download {model_name} model")
-            
-        # Verify all files were extracted
-        missing_files = [
-            f for f in config["required_files"] 
-            if not os.path.exists(os.path.join(model_folder, f))
-        ]
-        if missing_files:
-            st.error(f"❌ Missing files after download: {', '.join(missing_files)}")
-            raise FileNotFoundError(f"Missing files: {missing_files}")
+def download_and_extract_model(model_name):
+    zip_url = MODEL_URLS.get(model_name)
+    folder = f"{model_name.lower()}_model"
 
-# [Rest of your code remains the same...]
+    if not os.path.exists(folder):
+        st.info(f"📦 Downloading {model_name} model...")
+        zip_path = f"{folder}.zip"
+        r = requests.get(zip_url, stream=True)
+        with open(zip_path, 'wb') as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
 
-# === Text Processing Functions ===
+        st.info(f"📂 Extracting {model_name} model...")
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(folder)
+        os.remove(zip_path)
+
+# === Basic clean for transformers ===
 def basic_clean(text):
     return text.strip()
 
+# === Full clean for traditional models ===
 def clean_text(text):
     text = html.unescape(text)
     text = emoji.replace_emoji(text, replace='')
+
     text = text.lower()
     text = re.sub(r'<[^>]+>', ' ', text)
     text = re.sub(r'http\S+|www\S+|https\S+', ' ', text)
     text = re.sub(r'\s+', ' ', text).strip()
+
     text = text.translate(str.maketrans('', '', string.punctuation))
     text = re.sub(r'\d+', '', text)
     words = word_tokenize(text)
     words = [word for word in words if word not in stop_words]
     words = [lemmatizer.lemmatize(word) for word in words]
+
     return ' '.join(words)
 
-# === Traditional ML Models ===
-@st.cache_resource
+# === Load Sklearn Models ===
 def load_sklearn_models():
-    try:
-        vectorizer = joblib.load("traditional/tfidf_vectorizer.pkl")
-        logistic_model = joblib.load("traditional/logistic_model.pkl")
-        naive_model = joblib.load("traditional/naive_bayes_model.pkl")
-        return vectorizer, logistic_model, naive_model
-    except Exception as e:
-        st.error(f"❌ Failed to load traditional models: {str(e)}")
-        raise
+    vectorizer = joblib.load("traditional/tfidf_vectorizer.pkl")
+    logistic_model = joblib.load("traditional/logistic_model.pkl")
+    naive_model = joblib.load("traditional/naive_bayes_model.pkl")
+    return vectorizer, logistic_model, naive_model
 
-# === Label Mapping ===
+# === Label Map ===
 label_map = {
     0: "Normal",
     1: "Depression",
@@ -160,100 +88,87 @@ label_map = {
     6: "Personality disorder"
 }
 
-# === Prediction Functions ===
+# === Inference Functions ===
 def predict_transformer(model_name, text):
-    try:
-        DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        config = MODEL_CONFIG[model_name]
-        model_folder = config["folder"]
-        
-        setup_model(model_name)
-        
-        tokenizer = config["tokenizer_class"].from_pretrained(model_folder)
-        model = config["model_class"].from_pretrained(model_folder)
-        model.to(DEVICE)
-        model.eval()
+    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    folder = f"{model_name.lower()}_model"
 
-        inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True, max_length=512)
-        inputs = {k: v.to(DEVICE) for k, v in inputs.items()}
+    # Ensure model is downloaded
+    download_and_extract_model(model_name)
 
-        with torch.no_grad():
-            outputs = model(**inputs)
-            prediction = torch.argmax(outputs.logits, dim=1).item()
+    if model_name == "BERT":
+        tokenizer = BertTokenizerFast.from_pretrained(folder)
+        model = BertForSequenceClassification.from_pretrained(folder)
+    elif model_name == "DistilBERT":
+        tokenizer = DistilBertTokenizerFast.from_pretrained(folder)
+        model = DistilBertForSequenceClassification.from_pretrained(folder)
+    elif model_name == "RoBERTa":
+        tokenizer = RobertaTokenizerFast.from_pretrained(folder)
+        model = RobertaForSequenceClassification.from_pretrained(folder)
 
-        return label_map.get(prediction, "Unknown")
-    except Exception as e:
-        st.error(f"❌ Error in {model_name} prediction: {str(e)}")
-        return "Error in prediction"
+    model.to(DEVICE)
+    model.eval()
+
+    inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True, max_length=512)
+    inputs = {k: v.to(DEVICE) for k, v in inputs.items()}
+
+    with torch.no_grad():
+        outputs = model(**inputs)
+        prediction = torch.argmax(outputs.logits, dim=1).item()
+
+    return label_map.get(prediction, "Unknown")
 
 def predict_sklearn(model_type, vectorizer, model, text):
-    try:
-        vectorized = vectorizer.transform([text])
-        prediction = model.predict(vectorized)[0]
-        return label_map.get(prediction, "Unknown")
-    except Exception as e:
-        st.error(f"❌ Error in {model_type} prediction: {str(e)}")
-        return "Error in prediction"
+    vectorized = vectorizer.transform([text])
+    prediction = model.predict(vectorized)[0]
+    return label_map.get(prediction, "Unknown")
 
 # === Streamlit UI ===
 st.title("🧠 Mental Health Sentiment Analysis")
 
-# Model selection
+# Select model
 model_choice = st.selectbox(
     "Choose Model:",
-    ["BERT", "DistilBERT", "RoBERTa", "Logistic Regression", "Naive Bayes"],
-    index=0
+    ["BERT", "DistilBERT", "RoBERTa", "Logistic Regression", "Naive Bayes"]
 )
 
-# Text input
-text_input = st.text_area("Enter your text here:", height=150)
+text_input = st.text_area("Enter your text here:")
 
-if st.button("Analyze", type="primary"):
-    if not text_input.strip():
+if st.button("Analyze"):
+    if text_input.strip() == "":
         st.warning("⚠️ Please enter valid text.")
     else:
-        with st.spinner("🔍 Analyzing..."):
-            start_time = time.time()
-            
-            try:
-                if model_choice in ["BERT", "DistilBERT", "RoBERTa"]:
-                    cleaned = basic_clean(text_input)
-                    result = predict_transformer(model_choice, cleaned)
-                else:
-                    cleaned = clean_text(text_input)
-                    vec, log_model, nb_model = load_sklearn_models()
-                    model = log_model if model_choice == "Logistic Regression" else nb_model
-                    result = predict_sklearn(model_choice, vec, model, cleaned)
-                
-                elapsed_time = time.time() - start_time
-                st.success(f"""
-                ✅ **Prediction using {model_choice}:**  
-                **Result:** {result}  
-                **Processing time:** {elapsed_time:.2f} seconds
-                """)
-                
-            except Exception as e:
-                st.error(f"❌ Analysis failed: {str(e)}")
+        with st.spinner("🔍 Analyzing input..."):
+            time.sleep(1)
 
-# Sidebar information
+            if model_choice in ["BERT", "DistilBERT", "RoBERTa"]:
+                cleaned = basic_clean(text_input)
+                result = predict_transformer(model_choice, cleaned)
+            else:
+                cleaned = clean_text(text_input)
+                vec, log_model, nb_model = load_sklearn_models()
+                model = log_model if model_choice == "Logistic Regression" else nb_model
+                result = predict_sklearn(model_choice, vec, model, cleaned)
+
+        st.success(f"✅ Prediction using {model_choice}: {result}")
+
+# === Sidebar info ===
 with st.sidebar:
-    st.markdown("""
-    ### ℹ️ About This App
-    
-    This tool analyzes mental health-related text and classifies it into categories:
-    
-    - **Normal**
-    - **Depression**
-    - **Anxiety**  
-    - **Suicidal**  
-    - **Stress**  
-    - **Bipolar**  
-    - **Personality Disorder**  
-    
-    **Model Options:**  
-    - Transformers: BERT, DistilBERT, RoBERTa  
-    - Traditional: Logistic Regression, Naive Bayes  
-    
-    *For research/educational purposes only.*
-    """)
-
+    st.markdown("### ℹ️ About")
+    st.markdown(
+        '<u><b>Mental Health Sentiment Analyzer</b></u><br><br>'
+        'This app analyzes mental health-related text and classifies it into one of several psychological conditions. '
+        'It supports both modern transformer-based models (<b>BERT</b>, <b>DistilBERT</b>, <b>RoBERTa</b>) and traditional machine learning models '
+        '(<b>Logistic Regression</b>, <b>Naive Bayes</b>).<br><br>'
+        'Among the transformer models, <b>BERT</b> delivers the best performance. For traditional models, <b>Logistic Regression</b> performs the best overall.<br><br>'
+        '<b>Detected Categories:</b><br>'
+        '- Normal<br>'
+        '- Depression<br>'
+        '- Anxiety<br>'
+        '- Suicidal<br>'
+        '- Stress<br>'
+        '- Bipolar<br>'
+        '- Personality Disorder<br><br>'
+        '<i>This tool is intended for research and educational purposes only.</i>',
+        unsafe_allow_html=True
+    )
