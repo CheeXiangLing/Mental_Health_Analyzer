@@ -1,11 +1,8 @@
 import streamlit as st
-
-# Must be the first Streamlit command
-st.set_page_config(page_title="Mental Health Analyzer", layout="wide")
-
 import torch
 import os
 import requests
+import zipfile
 import nltk
 from transformers import (
     BertTokenizerFast, BertForSequenceClassification,
@@ -21,6 +18,9 @@ import string
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 from nltk.stem import WordNetLemmatizer
+
+# Must be first Streamlit command
+st.set_page_config(page_title="Mental Health Analyzer", layout="wide")
 
 # === Initialize NLTK Data ===
 def initialize_nltk():
@@ -44,62 +44,80 @@ lemmatizer = WordNetLemmatizer()
 MODEL_CONFIG = {
     "BERT": {
         "folder": "bert_model",
-        "model_url": "https://github.com/CheeXiangLing/Mental_Health_Analyzer/releases/download/ini/bert_model.safetensors",
-        "required_files": ["config.json", "tokenizer_config.json", "vocab.txt", "special_tokens_map.json"],
+        "zip_url": "https://github.com/CheeXiangLing/Mental_Health_Analyzer/releases/download/v1.0.0/bert_model.zip",
+        "required_files": ["config.json", "tokenizer_config.json", "vocab.txt", "special_tokens_map.json", "model.safetensors"],
         "tokenizer_class": BertTokenizerFast,
         "model_class": BertForSequenceClassification
     },
     "DistilBERT": {
         "folder": "distilbert_model",
-        "model_url": "https://github.com/CheeXiangLing/Mental_Health_Analyzer/releases/download/ini/distilbert_model.safetensors",
-        "required_files": ["config.json", "tokenizer_config.json", "vocab.txt", "special_tokens_map.json"],
+        "zip_url": "https://github.com/CheeXiangLing/Mental_Health_Analyzer/releases/download/v1.0.0/distilbert_model.zip",
+        "required_files": ["config.json", "tokenizer_config.json", "vocab.txt", "special_tokens_map.json", "model.safetensors"],
         "tokenizer_class": DistilBertTokenizerFast,
         "model_class": DistilBertForSequenceClassification
     },
     "RoBERTa": {
         "folder": "roberta_model",
-        "model_url": "https://github.com/CheeXiangLing/Mental_Health_Analyzer/releases/download/ini/roberta_model.safetensors",
-        "required_files": ["config.json", "tokenizer_config.json", "vocab.json", "merges.txt", "special_tokens_map.json"],
+        "zip_url": "https://github.com/CheeXiangLing/Mental_Health_Analyzer/releases/download/v1.0.0/roberta_model.zip",
+        "required_files": ["config.json", "tokenizer_config.json", "vocab.json", "merges.txt", "special_tokens_map.json", "model.safetensors"],
         "tokenizer_class": RobertaTokenizerFast,
         "model_class": RobertaForSequenceClassification
     }
 }
 
 # === File Download Utility ===
-def download_file(url, destination):
-    response = requests.get(url, stream=True)
-    response.raise_for_status()
-    
-    with open(destination, 'wb') as f:
-        for chunk in response.iter_content(chunk_size=8192):
-            f.write(chunk)
+def download_and_extract_zip(url, extract_to):
+    try:
+        # Download the zip file
+        zip_path = os.path.join(extract_to, "temp.zip")
+        response = requests.get(url, stream=True)
+        response.raise_for_status()
+        
+        with open(zip_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+        
+        # Extract the zip file
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(extract_to)
+        
+        # Remove the zip file
+        os.remove(zip_path)
+        return True
+    except Exception as e:
+        st.error(f"❌ Download/extract failed: {str(e)}")
+        if os.path.exists(zip_path):
+            os.remove(zip_path)
+        return False
 
 # === Model Setup ===
 @st.cache_resource
 def setup_model(model_name):
     config = MODEL_CONFIG[model_name]
     model_folder = config["folder"]
+    os.makedirs(model_folder, exist_ok=True)
     
-    # Check if safetensors file exists
-    safetensors_path = os.path.join(model_folder, "model.safetensors")
-    if not os.path.exists(safetensors_path):
-        with st.spinner(f"📥 Downloading {model_name} model weights..."):
-            try:
-                download_file(config["model_url"], safetensors_path)
-            except Exception as e:
-                st.error(f"❌ Failed to download model weights: {str(e)}")
-                raise
-
-    # Verify all required files exist
+    # Check if all required files exist
     missing_files = [
         f for f in config["required_files"] 
         if not os.path.exists(os.path.join(model_folder, f))
     ]
     
     if missing_files:
-        st.error(f"❌ Missing required files for {model_name}: {', '.join(missing_files)}")
-        st.error("Please ensure all tokenizer/config files are in the GitHub repository")
-        raise FileNotFoundError(f"Missing files: {missing_files}")
+        with st.spinner(f"📥 Downloading {model_name} model..."):
+            if not download_and_extract_zip(config["zip_url"], model_folder):
+                raise Exception(f"Failed to download {model_name} model")
+            
+        # Verify all files were extracted
+        missing_files = [
+            f for f in config["required_files"] 
+            if not os.path.exists(os.path.join(model_folder, f))
+        ]
+        if missing_files:
+            st.error(f"❌ Missing files after download: {', '.join(missing_files)}")
+            raise FileNotFoundError(f"Missing files: {missing_files}")
+
+# [Rest of your code remains the same...]
 
 # === Text Processing Functions ===
 def basic_clean(text):
@@ -238,3 +256,4 @@ with st.sidebar:
     
     *For research/educational purposes only.*
     """)
+
