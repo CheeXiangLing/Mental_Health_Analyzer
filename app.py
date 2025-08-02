@@ -66,32 +66,28 @@ def download_and_extract_model(model_name):
     
     if not files_exist:
         with st.spinner(f"📦 Downloading {model_name} model..."):
-            try:
-                # Create directory if it doesn't exist
-                os.makedirs(folder, exist_ok=True)
+        try:
+            # Create directory if it doesn't exist
+            os.makedirs(folder, exist_ok=True)
                 
-                zip_path = f"{folder}.zip"
-                r = requests.get(zip_url, stream=True)
-                r.raise_for_status()
+            zip_path = f"{folder}.zip"
+            r = requests.get(zip_url, stream=True)
+            r.raise_for_status()
                 
-                with open(zip_path, 'wb') as f:
-                    for chunk in r.iter_content(chunk_size=8192):
-                        f.write(chunk)
+            with open(zip_path, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
 
-                with st.spinner(f"📂 Extracting {model_name} model..."):
-                    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                        zip_ref.extractall(folder)
-                os.remove(zip_path)
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(folder)
+            os.remove(zip_path)
                 
-                # Verify all files were extracted
-                missing_files = [f for f in required_files[model_name] if not os.path.exists(os.path.join(folder, f))]
-                if missing_files:
-                    st.error(f"❌ Missing files after extraction: {', '.join(missing_files)}")
-                    raise FileNotFoundError(f"Missing files: {missing_files}")
+            # Verify all files were extracted
+            missing_files = [f for f in required_files[model_name] if not os.path.exists(os.path.join(folder, f))]
+            if missing_files:
+                st.error(f"❌ Missing files after extraction: {', '.join(missing_files)}")
+                raise FileNotFoundError(f"Missing files: {missing_files}")
                     
-            except Exception as e:
-                st.error(f"❌ Error downloading/extracting {model_name} model: {str(e)}")
-                raise
 
 # === Text Processing Functions ===
 def basic_clean(text):
@@ -231,3 +227,4 @@ with st.sidebar:
         '<i>This tool is intended for research and educational purposes only.</i>',
         unsafe_allow_html=True
     )
+
